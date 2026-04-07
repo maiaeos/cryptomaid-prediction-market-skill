@@ -277,11 +277,12 @@ class AntiSnipeMarketMaker(FarmingStrategy):
                 # 3. 获取市场
                 markets = await self.platform.get_all_markets()
                 
-                # 4. 筛选合适的市场 (高流动性, 接近 50/50)
+                # 4. 筛选最优市场 (积分效率最高)
                 suitable_markets = [
                     m for m in markets
-                    if m.liquidity > 10000
-                    and abs(m.yes_price - Decimal("0.5")) < Decimal("0.15")
+                    if m.liquidity > 10000           # 足够流动性
+                    and m.volume_24h > 5000          # 有交易量
+                    and abs(m.yes_price - Decimal("0.5")) < Decimal("0.1")  # 接近50/50
                 ]
                 
                 if not suitable_markets:
@@ -289,8 +290,19 @@ class AntiSnipeMarketMaker(FarmingStrategy):
                     await asyncio.sleep(self._randomize_interval())
                     continue
                 
-                # 5. 随机选择市场
-                market = random.choice(suitable_markets)
+                # 5. 选择最优市场 (按积分效率排序)
+                # 积分效率 = 交易量 / 流动性 (越高越好成交)
+                suitable_markets.sort(
+                    key=lambda m: m.volume_24h / max(m.liquidity, 1),
+                    reverse=True
+                )
+                
+                # 前3个中随机选择 (兼顾效率和随机性)
+                market = random.choice(suitable_markets[:3])
+                
+                logger.info(f"📊 选择市场: {market.question[:50]}...")
+                logger.info(f"   流动性: ${market.liquidity:,.0f} | 24h量: ${market.volume_24h:,.0f}")
+                logger.info(f"   价格: YES {market.yes_price:.3f} | NO {market.no_price:.3f}")
                 
                 # 6. 成本效率检查
                 if not await self._check_cost_efficiency(self.base_trade_size, market):
