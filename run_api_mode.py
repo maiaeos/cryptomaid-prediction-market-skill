@@ -55,7 +55,7 @@ async def main():
         print(f"❌ 连接失败: {e}")
         return
     
-    # 显示余额
+    # 显示余额 (可能失败)
     try:
         balance = await platform.get_balance()
         print(f"💰 账户余额:")
@@ -67,7 +67,8 @@ async def main():
             print("⚠️  USDC 余额不足，请充值")
             return
     except Exception as e:
-        print(f"⚠️  获取余额失败: {e}")
+        print(f"⚠️  获取余额失败 (API限制): {e}")
+        print("   继续运行...")
         print()
     
     # 显示最优市场
@@ -128,7 +129,7 @@ async def main():
         print(f"   暂停: {stats['paused_count']} 次")
         print(f"   跳过(成本): {stats['skipped_for_cost']} 次")
         
-        # 再次查询积分
+        # 再次查询积分 (可能失败)
         try:
             balance = await platform.get_balance()
             print(f"\n💎 当前积分: {balance['points']}")
