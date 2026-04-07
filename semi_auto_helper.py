@@ -118,17 +118,37 @@ async def main():
     print('='*70)
     print()
     
-    # 生成交易链接
+    # 生成交易链接并自动打开
     market_slug = best['market'].slug
     trade_url = f"https://limitless.exchange/markets/{market_slug}"
     
-    print('📱 操作步骤:')
-    print('   1. 点击下面的链接打开交易页面')
-    print(f"   2. 选择 '{best['direction']}' 方向")
-    print('   3. 输入金额: $12')
-    print('   4. 点击确认，OneKey 自动签名')
-    print()
+    print('📱 正在打开交易页面...')
     print(f'   链接: {trade_url}')
+    print()
+    
+    # 尝试自动打开浏览器
+    try:
+        import subprocess
+        import platform as pf
+        
+        system = pf.system()
+        if system == 'Darwin':  # macOS
+            subprocess.Popen(['open', trade_url])
+        elif system == 'Linux':
+            subprocess.Popen(['xdg-open', trade_url])
+        elif system == 'Windows':
+            subprocess.Popen(['start', trade_url], shell=True)
+        
+        print('✅ 浏览器已自动打开')
+    except Exception as e:
+        print(f'⚠️  自动打开失败: {e}')
+        print('   请手动复制链接打开')
+    
+    print()
+    print('操作步骤:')
+    print(f"   1. 选择 '{best['direction']}' 方向")
+    print('   2. 输入金额: $12')
+    print('   3. 点击确认，OneKey 自动签名')
     print()
     
     # 询问是否继续
