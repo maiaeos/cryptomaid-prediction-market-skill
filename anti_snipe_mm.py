@@ -1,6 +1,6 @@
 """
-防狙击做市策略
-遵循原则: 小单、随机、不暴露模式
+高胜率刷量策略 (S3优化版)
+遵循原则: 短周期、高胜率、低成本
 """
 
 import asyncio
@@ -16,38 +16,43 @@ from farming_strategies import FarmingStrategy
 logger = logging.getLogger(__name__)
 
 
-class AntiSnipeMarketMaker(FarmingStrategy):
+class HighWinRateFarmingStrategy(FarmingStrategy):
     """
-    防狙击做市策略
+    高胜率刷量策略 - S3赛季优化版
     
-    核心原则:
-    1. 小单分散 - 避免大单被狙击
-    2. 随机化 - 时间、价格、数量都随机
-    3. 不暴露模式 - 不固定间隔，不固定价格
-    4. 快速撤单 - 订单不长期挂盘
+    核心原则 (基于S3资料):
+    1. 短周期优先 - 剩余时间 <6h
+    2. 高胜率市场 - 胜率 >95% (价格极端)
+    3. 高频小额 - 每天20-50笔, 每笔$10-15
+    4. 低成本损耗 - 单位风险/积分产出最大化
     """
     
     def __init__(self, platform: PredictionMarket, config: Dict):
         super().__init__(platform, config)
         
-        # 基础参数
-        self.base_trade_size = Decimal(str(config.get("base_trade_size", 10)))
-        self.max_trade_size = Decimal(str(config.get("max_trade_size", 50)))
-        self.min_interval = config.get("min_interval", 30)  # 最小间隔
-        self.max_interval = config.get("max_interval", 120)  # 最大间隔
+        # S3优化参数
+        self.base_trade_size = Decimal(str(config.get("base_trade_size", 12)))  # $12 最优
+        self.max_trade_size = Decimal(str(config.get("max_trade_size", 15)))   # $15 上限
+        self.min_interval = config.get("min_interval", 15)   # 15分钟间隔
+        self.max_interval = config.get("max_interval", 45)   # 45分钟最大间隔
         
-        # 防狙击参数
-        self.order_lifetime = config.get("order_lifetime", 60)  # 订单存活时间
-        self.price_variance = Decimal(str(config.get("price_variance", 0.005)))  # 价格随机范围
-        self.size_variance = Decimal(str(config.get("size_variance", 0.2)))  # 数量随机范围
+        # 市场筛选参数
+        self.max_time_remaining = config.get("max_time_remaining", 6)  # 最大6小时
+        self.min_win_rate = config.get("min_win_rate", 0.95)  # 胜率>95%
+        self.prefer_crypto = config.get("prefer_crypto", True)  # 优先Crypto日预测
+        
+        # 防狙击参数 (降低敏感度)
+        self.order_lifetime = config.get("order_lifetime", 300)  # 5分钟
+        self.price_variance = Decimal(str(config.get("price_variance", 0.01)))  # 1%价格浮动
+        self.size_variance = Decimal(str(config.get("size_variance", 0.15)))  # 15%数量浮动
         
         # 自动暂停参数
-        self.snipe_pause_threshold = config.get("snipe_pause_threshold", 5)  # 被狙击次数阈值
-        self.snipe_pause_duration = config.get("snipe_pause_duration", 600)  # 暂停时长(秒)
-        self.min_trades_for_check = config.get("min_trades_for_check", 10)  # 最小交易数才检查
+        self.snipe_pause_threshold = config.get("snipe_pause_threshold", 10)  # 提高阈值
+        self.snipe_pause_duration = config.get("snipe_pause_duration", 300)  # 5分钟暂停
+        self.min_trades_for_check = config.get("min_trades_for_check", 20)
         
-        # 成本监控参数
-        self.max_gas_cost_usd = Decimal(str(config.get("max_gas_cost_usd", 1.0)))  # 最大Gas成本
+        # 成本监控
+        self.max_gas_cost_usd = Decimal(str(config.get("max_gas_cost_usd", 0.5)))  # 降低Gas限制
         self.min_profit_margin = Decimal(str(config.get("min_profit_margin", 0.002)))  # 最小利润边际 0.2%
         
         # 状态
@@ -65,6 +70,57 @@ class AntiSnipeMarketMaker(FarmingStrategy):
             "paused_count": 0,
             "skipped_for_cost": 0
         }
+    
+    def _filter_s3_markets(self, markets: List) -> List:
+        """
+        S3赛季市场筛选 - 高胜率刷量策略
+        
+        筛选条件:
+        1. 剩余时间 <6h (短周期优先)
+        2. 胜率 >95% (价格极端: <5% 或 >95%)
+        3. 流动性充足
+        4. 优先 Crypto 日预测
+        """
+        suitable = []
+        
+        for m in markets:
+            # 检查剩余时间
+            time_remaining_hours = getattr(m, 'time_remaining', 999)
+            if time_remaining_hours > self.max_time_remaining:
+                continue
+            
+            # 检查胜率 (价格极端程度)
+            yes_price = float(m.yes_price) if m.yes_price else 0.5
+            no_price = float(m.no_price) if m.no_price else 0.5
+            
+            # 高胜率 = 价格极端 (<5% 或 >95%)
+            is_high_win_rate = (yes_price < 0.05 or yes_price > 0.95 or 
+                               no_price < 0.05 or no_price > 0.95)
+            
+            if not is_high_win_rate:
+                continue
+            
+            # 检查流动性
+            liquidity = float(m.liquidity) if m.liquidity else 0
+            if liquidity < 5000:  # 降低流动性要求
+                continue
+            
+            # 检查是否是 Crypto (优先)
+            question = getattr(m, 'question', '').lower()
+            is_crypto = any(x in question for x in ['btc', 'eth', 'sol', 'xrp', 'crypto'])
+            
+            # 打分排序
+            score = 0
+            score += (6 - time_remaining_hours) * 10  # 时间越短越好
+            score += 20 if is_crypto else 0  # Crypto 加分
+            score += min(liquidity / 1000, 50)  # 流动性加分
+            
+            suitable.append((m, score))
+        
+        # 按分数排序
+        suitable.sort(key=lambda x: x[1], reverse=True)
+        
+        return [m for m, _ in suitable]
     
     def _randomize_size(self) -> Decimal:
         """随机化交易金额"""
@@ -252,13 +308,13 @@ class AntiSnipeMarketMaker(FarmingStrategy):
             return True  # 出错时默认继续
     
     async def run(self):
-        """运行防狙击做市策略"""
-        logger.info("🚀 启动防狙击做市策略")
-        logger.info(f"   基础金额: {self.base_trade_size} USDC")
-        logger.info(f"   随机间隔: {self.min_interval}-{self.max_interval}s")
-        logger.info(f"   订单存活: {self.order_lifetime}s")
-        logger.info(f"   自动暂停: {self.snipe_pause_threshold}次狙击/{self.min_trades_for_check}笔交易")
-        logger.info(f"   成本限制: Gas<${self.max_gas_cost_usd}, 利润>{self.min_profit_margin*100}%")
+        """运行高胜率刷量策略 (S3优化版)"""
+        logger.info("🚀 启动高胜率刷量策略 (S3赛季优化版)")
+        logger.info(f"   单笔金额: ${self.base_trade_size}-${self.max_trade_size} USDC")
+        logger.info(f"   交易间隔: {self.min_interval}-{self.max_interval}分钟")
+        logger.info(f"   目标市场: <{self.max_time_remaining}h, 胜率>{self.min_win_rate*100:.0f}%")
+        logger.info(f"   日目标: 20-50笔, volume $500-1000")
+        logger.info(f"   成本限制: Gas<${self.max_gas_cost_usd}")
         
         self.running = True
         
@@ -277,25 +333,16 @@ class AntiSnipeMarketMaker(FarmingStrategy):
                 # 3. 获取市场
                 markets = await self.platform.get_all_markets()
                 
-                # 4. 筛选最优市场 (积分效率最高)
-                suitable_markets = [
-                    m for m in markets
-                    if m.liquidity > 10000           # 足够流动性
-                    and m.volume_24h > 5000          # 有交易量
-                    and abs(m.yes_price - Decimal("0.5")) < Decimal("0.1")  # 接近50/50
-                ]
+                # 4. 筛选最优市场 (S3优化: 短周期 + 高胜率)
+                suitable_markets = self._filter_s3_markets(markets)
                 
                 if not suitable_markets:
-                    logger.debug("未找到合适的市场")
+                    logger.debug("未找到合适的S3市场")
                     await asyncio.sleep(self._randomize_interval())
                     continue
                 
-                # 5. 选择最优市场 (按积分效率排序)
-                # 积分效率 = 交易量 / 流动性 (越高越好成交)
-                suitable_markets.sort(
-                    key=lambda m: m.volume_24h / max(m.liquidity, 1),
-                    reverse=True
-                )
+                # 5. 选择最优市场 (按剩余时间排序, 优先短周期)
+                suitable_markets.sort(key=lambda m: m.time_remaining or 999)
                 
                 # 前3个中随机选择 (兼顾效率和随机性)
                 market = random.choice(suitable_markets[:3])

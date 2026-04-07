@@ -83,13 +83,14 @@ async def main():
     
     # 启动策略
     print("=" * 70)
-    print("🤖 启动自动赚积分策略")
+    print("🤖 启动高胜率刷量策略 (S3赛季优化版)")
     print("=" * 70)
     print()
-    print("⚙️  配置:")
-    print("   基础金额: 10 USDC")
-    print("   随机间隔: 30-120 秒")
-    print("   防狙击: 启用")
+    print("⚙️  S3优化配置:")
+    print("   单笔金额: $12-15 USDC")
+    print("   交易间隔: 15-45 分钟")
+    print("   目标市场: <6h, 胜率>95%")
+    print("   日目标: 20-50笔, volume $500-1000")
     print("   成本监控: 启用")
     print()
     print("💡 原理: 频繁小额交易 → 赚取积分 → 潜在空投")
@@ -98,16 +99,19 @@ async def main():
     print("=" * 70)
     print()
     
-    # 配置策略
+    # 配置策略 (S3优化版)
     config = {
-        "base_trade_size": 10,
-        "max_trade_size": 20,
-        "min_interval": 30,
-        "max_interval": 120,
-        "order_lifetime": 60,
-        "snipe_pause_threshold": 5,
-        "snipe_pause_duration": 600,
-        "max_gas_cost_usd": 1.0,
+        "base_trade_size": 12,      # $12 最优
+        "max_trade_size": 15,       # $15 上限
+        "min_interval": 15,         # 15分钟
+        "max_interval": 45,         # 45分钟
+        "max_time_remaining": 6,    # 最大6小时
+        "min_win_rate": 0.95,       # 胜率>95%
+        "prefer_crypto": True,      # 优先Crypto
+        "order_lifetime": 300,      # 5分钟
+        "snipe_pause_threshold": 10,
+        "snipe_pause_duration": 300,
+        "max_gas_cost_usd": 0.5,
         "min_profit_margin": 0.001
     }
     
